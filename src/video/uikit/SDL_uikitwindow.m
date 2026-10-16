@@ -211,6 +211,16 @@ int UIKit_CreateWindow(_THIS, SDL_Window *window)
             [uiwindow setScreen:data.uiscreen];
         }
 
+        /* With the UIScene life cycle a window must belong to a scene, or it
+         * is never shown. */
+        if (@available(iOS 13.0, tvOS 13.0, *)) {
+            UIWindowScene *scene = UIKit_GetWindowScene();
+            if (scene && data.uiscreen == [UIScreen mainScreen]) {
+                uiwindow.windowScene = scene;
+                uiwindow.frame = data.uiscreen.bounds;
+            }
+        }
+
         if (SetupWindowData(_this, window, uiwindow, SDL_TRUE) < 0) {
             return -1;
         }

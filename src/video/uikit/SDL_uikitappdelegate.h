@@ -44,4 +44,18 @@
 
 @end
 
+/* UIScene life cycle (required for apps built with the iOS 27 SDK).
+ * Used when the app's Info.plist has a UIApplicationSceneManifest; the
+ * manifest's UISceneDelegateClassName should be SDLUIKitSceneDelegate. */
+API_AVAILABLE(ios(13.0), tvos(13.0))
+@interface SDLUIKitSceneDelegate : UIResponder <UIWindowSceneDelegate>
+
+@property (nonatomic) UIWindow *window;
+
+@end
+
+/* The window scene SDL windows should be attached to, or nil when the app
+ * doesn't use the scene life cycle. */
+UIWindowScene *UIKit_GetWindowScene(void) API_AVAILABLE(ios(13.0), tvos(13.0));
+
 /* vi: set ts=4 sw=4 expandtab: */

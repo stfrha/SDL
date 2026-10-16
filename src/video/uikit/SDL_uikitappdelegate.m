@@ -50,6 +50,34 @@ static int forward_argc;
 static char **forward_argv;
 static int exit_status;
 
+/* UIScene life cycle support */
+static BOOL main_started = NO;
+static __weak UIWindowScene *sdl_window_scene API_AVAILABLE(ios(13.0), tvos(13.0)) = nil;
+
+static BOOL UIKit_UsesSceneLifeCycle(void)
+{
+    if (@available(iOS 13.0, tvOS 13.0, *)) {
+        return [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIApplicationSceneManifest"] != nil;
+    }
+    return NO;
+}
+
+UIWindowScene *UIKit_GetWindowScene(void)
+{
+    if (!UIKit_UsesSceneLifeCycle()) {
+        return nil;
+    }
+    if (sdl_window_scene) {
+        return sdl_window_scene;
+    }
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            return (UIWindowScene *)scene;
+        }
+    }
+    return nil;
+}
+
 int SDL_UIKitRunApp(int argc, char *argv[], SDL_main_func mainFunction)
 {
     int i;
@@ -345,6 +373,7 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
 
 @implementation SDLUIKitDelegate {
     UIWindow *launchWindow;
+    UIViewController *launchViewController; /* shown once a scene connects */
 }
 
 /* convenience method */
@@ -384,6 +413,11 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
 
 - (void)postFinishLaunch
 {
+    if (main_started) {
+        return;
+    }
+    main_started = YES;
+
     /* Hide the launch screen the next time the run loop is run. SDL apps will
      * have a chance to load resources while the launch screen is still up. */
     [self performSelector:@selector(hideLaunchScreen) withObject:nil afterDelay:0.0];
@@ -441,7 +475,10 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
         vc = [[SDLLaunchScreenController alloc] initWithNibName:screenname bundle:bundle];
     }
 
-    if (vc.view) {
+    if (vc.view && UIKit_UsesSceneLifeCycle()) {
+        /* Windows need a scene; show it when the scene connects. */
+        launchViewController = vc;
+    } else if (vc.view) {
         launchWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
 
         /* We don't want the launch window immediately hidden when a real SDL
@@ -464,9 +501,43 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
                         SDL_IdleTimerDisabledChanged, NULL);
 
     SDL_SetMainReady();
-    [self performSelector:@selector(postFinishLaunch) withObject:nil afterDelay:0.0];
+    if (!UIKit_UsesSceneLifeCycle()) {
+        [self performSelector:@selector(postFinishLaunch) withObject:nil afterDelay:0.0];
+    }
+    /* else: SDLUIKitSceneDelegate starts the app once the scene connects, so
+     * SDL windows can be attached to it. */
 
     return YES;
+}
+
+- (void)sceneDidConnect:(UIWindowScene *)scene API_AVAILABLE(ios(13.0), tvos(13.0))
+{
+    sdl_window_scene = scene;
+
+#ifdef SDL_IPHONE_LAUNCHSCREEN
+    if (launchViewController && !launchWindow && !main_started) {
+        launchWindow = [[UIWindow alloc] initWithWindowScene:scene];
+        launchWindow.frame = [UIScreen mainScreen].bounds;
+        launchWindow.windowLevel = UIWindowLevelNormal + 1.0;
+        launchWindow.hidden = NO;
+        launchWindow.rootViewController = launchViewController;
+    }
+    launchViewController = nil;
+#endif
+
+    /* Run SDL_main on the next run loop pass, after the scene has finished
+     * connecting (SDL_main doesn't return until the app quits). */
+    [self performSelector:@selector(postFinishLaunch) withObject:nil afterDelay:0.0];
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                              options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0), tvos(13.0))
+{
+    UISceneConfiguration *config = [[UISceneConfiguration alloc] initWithName:@"Default Configuration"
+                                                                  sessionRole:connectingSceneSession.role];
+    config.delegateClass = [SDLUIKitSceneDelegate class];
+    return config;
 }
 
 - (UIWindow *)window
@@ -518,6 +589,47 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
 }
 
 #endif
+
+@end
+
+API_AVAILABLE(ios(13.0), tvos(13.0))
+@implementation SDLUIKitSceneDelegate
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions
+{
+    if (![scene isKindOfClass:[UIWindowScene class]]) {
+        return;
+    }
+    [[SDLUIKitDelegate sharedAppDelegate] sceneDidConnect:(UIWindowScene *)scene];
+
+    for (UIOpenURLContext *context in connectionOptions.URLContexts) {
+        [[SDLUIKitDelegate sharedAppDelegate] sendDropFileForURL:context.URL];
+    }
+}
+
+- (void)sceneDidDisconnect:(UIScene *)scene
+{
+    if (sdl_window_scene == scene) {
+        sdl_window_scene = nil;
+    }
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts
+{
+    for (UIOpenURLContext *context in URLContexts) {
+        [[SDLUIKitDelegate sharedAppDelegate] sendDropFileForURL:context.URL];
+    }
+}
+
+- (UIWindow *)window
+{
+    return [[SDLUIKitDelegate sharedAppDelegate] window];
+}
+
+- (void)setWindow:(UIWindow *)window
+{
+    /* Do nothing. */
+}
 
 @end
 

@@ -25,6 +25,7 @@
 #include "SDL.h"
 #include "SDL_uikitvideo.h"
 #include "SDL_uikitwindow.h"
+#import "SDL_uikitappdelegate.h"
 
 /* Display a UIKit message box */
 
@@ -100,6 +101,12 @@ static BOOL UIKit_ShowMessageBoxAlertController(const SDL_MessageBoxData *messag
 
     if (window == nil || window.rootViewController == nil) {
         alertwindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        if (@available(iOS 13.0, tvOS 13.0, *)) {
+            UIWindowScene *scene = UIKit_GetWindowScene();
+            if (scene) {
+                alertwindow.windowScene = scene;
+            }
+        }
         alertwindow.rootViewController = [UIViewController new];
         alertwindow.windowLevel = UIWindowLevelAlert;
 
